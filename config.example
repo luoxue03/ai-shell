@@ -1,0 +1,14 @@
+# AI Shell 配置
+# 复制为 config 并填入你的 API 信息
+
+# API Key
+AI_SHELL_API_KEY="your-api-key-here"
+
+# 模型
+AI_SHELL_MODEL="gpt-4o"
+
+# API 地址（兼容 OpenAI chat/completions 接口）
+AI_SHELL_BASE_URL="https://api.openai.com/v1"
+
+# 超时时间（秒）
+AI_SHELL_TIMEOUT=12
