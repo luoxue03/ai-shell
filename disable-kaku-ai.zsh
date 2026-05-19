@@ -20,6 +20,7 @@ _disable_kaku_ai_apply() {
             POSTDISPLAY=
             zle .accept-line
         }
+        typeset -g _KAKU_AI_DISABLED=1
     fi
     precmd_functions=("${precmd_functions[@]:#_disable_kaku_ai_apply}")
 }

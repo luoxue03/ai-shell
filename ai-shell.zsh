@@ -287,7 +287,9 @@ ai-shell() {
         off|disable)
             AI_SHELL_DISABLE=1
             echo "disabled" > "$_state_file"
-            if (( ${+functions[_kaku_ai_query_accept_line]} )); then
+            if [[ "${_KAKU_AI_DISABLED:-0}" == "1" ]]; then
+                print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用${_c_reset} ${_c_grey}(# 视为注释，Kaku 也被禁用)${_c_reset}"
+            elif (( ${+functions[_kaku_ai_query_accept_line]} )); then
                 print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用${_c_reset} ${_c_grey}(# 由 Kaku 处理)${_c_reset}"
             else
                 print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用${_c_reset} ${_c_grey}(# 视为注释)${_c_reset}"
