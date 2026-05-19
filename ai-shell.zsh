@@ -2,14 +2,23 @@
 # ai-shell.zsh — Standalone AI command generator for any terminal
 # Usage: type "# <query>" and press Enter to generate shell commands via LLM
 # Toggle: run `ai-shell on|off|toggle|status`
+#
+# This file ONLY handles ai-shell's own widget. If you also want to disable
+# Kaku's built-in # handler, source disable-kaku-ai.zsh BEFORE this file.
 
 # Permanent disable: export AI_SHELL_DISABLE=1 before sourcing
 [[ "${AI_SHELL_DISABLE:-0}" == "1" ]] && return 0
 
 # Read persisted runtime toggle state
-[[ -f "$HOME/.config/ai-shell/state" ]] && \
-    [[ "$(cat "$HOME/.config/ai-shell/state" 2>/dev/null)" == "disabled" ]] && \
-    AI_SHELL_DISABLE=1
+if [[ -f "$HOME/.config/ai-shell/state" ]]; then
+    if [[ "$(cat "$HOME/.config/ai-shell/state" 2>/dev/null)" == "disabled" ]]; then
+        typeset -g AI_SHELL_DISABLE=1
+    else
+        typeset -g AI_SHELL_DISABLE=0
+    fi
+else
+    typeset -g AI_SHELL_DISABLE=0
+fi
 
 # ── Config ────────────────────────────────────────────────────────────
 _ai_shell_load_config() {
@@ -24,7 +33,7 @@ _ai_shell_load_config() {
     if [[ -z "$AI_SHELL_API_KEY" ]]; then
         local toml="$HOME/.config/kaku/assistant.toml"
         if [[ -f "$toml" ]]; then
-            _ai_shell_parse_toml() { grep -E "^$1\s*=" "$2" | head-1 | sed 's/^[^=]*=[[:space:]]*//;s/^"//;s/"[[:space:]]*$//'; }
+            _ai_shell_parse_toml() { grep -E "^$1\s*=" "$2" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/^"//;s/"[[:space:]]*$//'; }
             AI_SHELL_API_KEY=$(_ai_shell_parse_toml api_key "$toml")
             AI_SHELL_MODEL=$(_ai_shell_parse_toml model "$toml")
             AI_SHELL_BASE_URL=$(_ai_shell_parse_toml base_url "$toml")
@@ -105,10 +114,8 @@ Rules:
 
     local api_url="${AI_SHELL_BASE_URL%/}/chat/completions"
 
-    # Show thinking indicator
     print -n "\n  ${_c_purple}${_c_reset} ${_c_grey}AI thinking...${_c_reset}"
 
-    # Synchronous API call
     local raw_response
     raw_response=$(command curl -sS --fail \
         --connect-timeout 3 \
@@ -119,7 +126,6 @@ Rules:
         -d "$payload" 2>/dev/null)
     local curl_exit=$?
 
-    # Clear thinking line
     print -n "\r\e[2K\e[1A\e[2K"
 
     if [[ $curl_exit -ne 0 || -z "$raw_response" ]]; then
@@ -129,7 +135,6 @@ Rules:
         return
     fi
 
-    # Parse outer response
     local content
     content=$(echo "$raw_response" | command jq -r '.choices[0].message.content // empty' 2>/dev/null)
 
@@ -140,17 +145,14 @@ Rules:
         return
     fi
 
-    # Extract inner JSON (tolerant of surrounding text)
     local json_str
     json_str=$(echo "$content" | command sed -n '/{/,/}/p')
     [[ -z "$json_str" ]] && json_str="$content"
 
-    # Parse options array
     local opt_count
     opt_count=$(echo "$json_str" | command jq -r '.options | length' 2>/dev/null)
 
     if [[ -z "$opt_count" || "$opt_count" == "0" ]]; then
-        # Fallback: try single-command format
         local single_cmd single_summary
         single_cmd=$(echo "$json_str" | command jq -r '.command // empty' 2>/dev/null)
         single_summary=$(echo "$json_str" | command jq -r '.summary // empty' 2>/dev/null)
@@ -168,7 +170,6 @@ Rules:
         return
     fi
 
-    # Build options display
     local -a commands summaries whys dangers
     local i _cmd _summary _why
     for (( i=0; i<opt_count && i<3; i++ )); do
@@ -190,7 +191,6 @@ Rules:
         return
     fi
 
-    # Render selection UI
     print ""
     print "  ${_c_purple}╭─ AI Shell ───────────────────────────────────╮${_c_reset}"
     for (( i=1; i<=${#commands[@]}; i++ )); do
@@ -220,11 +220,9 @@ Rules:
     print "  ${_c_purple}╰──────────────────── 按数字键选择，其他键取消 ─╯${_c_reset}"
     print ""
 
-    # Wait for single keypress
     local choice
     read -k 1 choice
 
-    # Validate choice
     if [[ "$choice" =~ ^[1-9]$ ]] && (( choice <= ${#commands[@]} )); then
         BUFFER="${commands[$choice]}"
         CURSOR=${#BUFFER}
@@ -236,7 +234,20 @@ Rules:
 }
 
 # ── Widget ────────────────────────────────────────────────────────────
+# Single-source-of-truth dispatch: flag check is the FIRST thing the widget
+# does. No widget swapping, so the flag is always honored regardless of how
+# the widget got wrapped by other plugins (zsh-autosuggestions, etc.).
 _ai_shell_accept_line() {
+    # When disabled, delegate to Kaku's handler if present, else builtin
+    if [[ "${AI_SHELL_DISABLE:-0}" == "1" ]]; then
+        if (( ${+functions[_kaku_ai_query_accept_line]} )); then
+            _kaku_ai_query_accept_line
+        else
+            zle .accept-line
+        fi
+        return
+    fi
+
     if [[ -n "$BUFFER" && "${BUFFER[1]}" == '#' && "$BUFFER" != *$'\n'* ]]; then
         local query="${BUFFER:1}"
         query="${query# }"
@@ -263,54 +274,24 @@ _ai_shell_accept_line() {
 }
 
 # ── Toggle Command ────────────────────────────────────────────────────
-# Two independent operations:
-#   1. _ai_shell_enable  / _ai_shell_disable  — ai-shell's own widget
-#   2. _ai_shell_disable_kaku / _ai_shell_restore_kaku — Kaku's # handler
-# "on"  = disable Kaku's # first, then register ai-shell's widget
-# "off" = remove ai-shell's widget, then restore Kaku's #
-_ai_shell_disable_kaku() {
-    [[ "${_AI_SHELL_KAKU_DISABLED:-0}" == "1" ]] && return
-    # Only count as "disabled Kaku" if Kaku's widget was actually active
-    if [[ "${widgets[accept-line]}" == *"_kaku_ai_query_accept_line"* ]]; then
-        zle -A .accept-line accept-line
-        _AI_SHELL_KAKU_DISABLED=1
-    fi
-}
-
-_ai_shell_restore_kaku() {
-    [[ "${_AI_SHELL_KAKU_DISABLED:-0}" == "0" ]] && return
-    if (( ${+functions[_kaku_ai_query_accept_line]} )); then
-        zle -N accept-line _kaku_ai_query_accept_line
-        _AI_SHELL_KAKU_DISABLED=0
-    fi
-}
-
-_ai_shell_enable() {
-    _ai_shell_disable_kaku
-    zle -N accept-line _ai_shell_accept_line
-    AI_SHELL_DISABLE=0
-}
-
-_ai_shell_disable() {
-    # Only restore if we own the widget
-    [[ "${widgets[accept-line]}" == *"_ai_shell_accept_line"* ]] || return
-    zle -A .accept-line accept-line
-    _ai_shell_restore_kaku
-    AI_SHELL_DISABLE=1
-}
-
+# Pure flag manipulation. The widget reads the flag on every keystroke,
+# so toggling is always effective and never races with widget wrapping.
 ai-shell() {
     local _state_file="$HOME/.config/ai-shell/state"
     case "${1:-toggle}" in
         on|enable)
-            _ai_shell_enable
+            AI_SHELL_DISABLE=0
             echo "enabled" > "$_state_file"
             print "  ${_c_purple}AI Shell${_c_reset} ${_c_green}✓ 已启用${_c_reset}"
             ;;
         off|disable)
-            _ai_shell_disable
+            AI_SHELL_DISABLE=1
             echo "disabled" > "$_state_file"
-            print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用${_c_reset}"
+            if (( ${+functions[_kaku_ai_query_accept_line]} )); then
+                print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用${_c_reset} ${_c_grey}(# 由 Kaku 处理)${_c_reset}"
+            else
+                print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用${_c_reset} ${_c_grey}(# 视为注释)${_c_reset}"
+            fi
             ;;
         toggle)
             if [[ "${AI_SHELL_DISABLE:-0}" == "1" ]]; then
@@ -333,15 +314,11 @@ ai-shell() {
 }
 
 # ── Registration ──────────────────────────────────────────────────────
+# Deferred to precmd so we register AFTER plugins like zsh-autosuggestions
+# and Kaku's own widget setup. Last writer wins.
 _ai_shell_register() {
-    # Avoid re-registration on re-source
     [[ "${widgets[accept-line]}" == *"_ai_shell_accept_line"* ]] && return
-
-    if [[ "${AI_SHELL_DISABLE:-0}" != "1" ]]; then
-        # Disable Kaku's # first, then take over
-        _ai_shell_disable_kaku
-        zle -N accept-line _ai_shell_accept_line
-    fi
+    zle -N accept-line _ai_shell_accept_line
     precmd_functions=("${precmd_functions[@]:#_ai_shell_register}")
 }
 precmd_functions+=(_ai_shell_register)

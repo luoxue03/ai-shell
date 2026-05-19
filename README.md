@@ -64,8 +64,19 @@ AI_SHELL_TIMEOUT=15
 在 `~/.zshrc` 末尾添加：
 
 ```bash
+# 仅启用 ai-shell（# 由 ai-shell 处理，Kaku 内置的 # 仍可在 ai-shell off 时使用）
 [[ -f "$HOME/.config/ai-shell/ai-shell.zsh" ]] && source "$HOME/.config/ai-shell/ai-shell.zsh"
 ```
+
+如果你**不想用 Kaku 内置的 `#` AI 功能**（即 `ai-shell off` 时让 `#` 当作普通注释），额外加载：
+
+```bash
+# 可选：先禁用 Kaku 的 # 功能，再加载 ai-shell
+[[ -f "$HOME/.config/ai-shell/disable-kaku-ai.zsh" ]] && source "$HOME/.config/ai-shell/disable-kaku-ai.zsh"
+[[ -f "$HOME/.config/ai-shell/ai-shell.zsh" ]] && source "$HOME/.config/ai-shell/ai-shell.zsh"
+```
+
+> `disable-kaku-ai.zsh` 在非 Kaku 终端中是 no-op，可以安全保留。
 
 新开终端 tab 生效。
 
@@ -91,11 +102,17 @@ AI_SHELL_TIMEOUT=15
 在终端中直接运行 `ai-shell` 命令切换：
 
 ```bash
-ai-shell off     # 禁用 ai-shell，回退到 Kaku 内置的 # 功能
+ai-shell off     # 禁用 ai-shell（# 回退到 Kaku 或注释，取决于是否加载 disable-kaku-ai.zsh）
 ai-shell on      # 重新启用 ai-shell
 ai-shell toggle  # 切换开关
 ai-shell status  # 查看当前状态
 ```
+
+开关状态会持久化到 `~/.config/ai-shell/state`，新终端 tab 自动继承。
+
+`off` 后 `#` 的行为：
+- 若加载了 `disable-kaku-ai.zsh` → 视为普通注释（zsh `.accept-line`）
+- 否则 → 由 Kaku 内置 AI 处理
 
 也可以在 sourcing 前设置环境变量永久禁用：
 
@@ -127,9 +144,11 @@ export AI_SHELL_DISABLE=1
 
 ```
 ~/.config/ai-shell/
-├── ai-shell.zsh    # 主插件
-├── config           # API 配置（可选）
-└── README.md        # 本文件
+├── ai-shell.zsh         # 主插件（# AI 命令生成 + 开关）
+├── disable-kaku-ai.zsh  # 可选：禁用 Kaku 内置的 # AI 功能
+├── config                # API 配置（可选）
+├── state                 # 开关状态（自动生成）
+└── README.md             # 本文件
 ```
 
 ## 致谢
