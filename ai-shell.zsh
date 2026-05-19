@@ -24,7 +24,7 @@ _ai_shell_load_config() {
     if [[ -z "$AI_SHELL_API_KEY" ]]; then
         local toml="$HOME/.config/kaku/assistant.toml"
         if [[ -f "$toml" ]]; then
-            _ai_shell_parse_toml() { grep -E "^$1\s*=" "$2" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/^"//;s/"[[:space:]]*$//'; }
+            _ai_shell_parse_toml() { grep -E "^$1\s*=" "$2" | head-1 | sed 's/^[^=]*=[[:space:]]*//;s/^"//;s/"[[:space:]]*$//'; }
             AI_SHELL_API_KEY=$(_ai_shell_parse_toml api_key "$toml")
             AI_SHELL_MODEL=$(_ai_shell_parse_toml model "$toml")
             AI_SHELL_BASE_URL=$(_ai_shell_parse_toml base_url "$toml")
@@ -236,8 +236,6 @@ Rules:
 }
 
 # ── Widget ────────────────────────────────────────────────────────────
-# Only active when ai-shell is the registered accept-line widget.
-# When disabled, the widget is swapped out entirely — this function is not called.
 _ai_shell_accept_line() {
     if [[ -n "$BUFFER" && "${BUFFER[1]}" == '#' && "$BUFFER" != *$'\n'* ]]; then
         local query="${BUFFER:1}"
@@ -261,44 +259,57 @@ _ai_shell_accept_line() {
         fi
     fi
 
-    # Non-# input: delegate to previous handler (e.g., Kaku's)
-    if [[ -n "$_AI_SHELL_PREV_FN" ]]; then
-        zle _ai_shell_prev_accept_line
-    else
-        zle .accept-line
-    fi
+    zle .accept-line
 }
 
 # ── Toggle Command ────────────────────────────────────────────────────
-# Swaps the accept-line widget instead of setting a flag.
-# on  → register ai-shell's widget (saves current one if not saved)
-# off → restore previous widget (Kaku's or builtin)
+# Two independent operations:
+#   1. _ai_shell_enable  / _ai_shell_disable  — ai-shell's own widget
+#   2. _ai_shell_disable_kaku / _ai_shell_restore_kaku — Kaku's # handler
+# "on"  = disable Kaku's # first, then register ai-shell's widget
+# "off" = remove ai-shell's widget, then restore Kaku's #
+_ai_shell_disable_kaku() {
+    [[ "${_AI_SHELL_KAKU_DISABLED:-0}" == "1" ]] && return
+    # Only count as "disabled Kaku" if Kaku's widget was actually active
+    if [[ "${widgets[accept-line]}" == *"_kaku_ai_query_accept_line"* ]]; then
+        zle -A .accept-line accept-line
+        _AI_SHELL_KAKU_DISABLED=1
+    fi
+}
+
+_ai_shell_restore_kaku() {
+    [[ "${_AI_SHELL_KAKU_DISABLED:-0}" == "0" ]] && return
+    if (( ${+functions[_kaku_ai_query_accept_line]} )); then
+        zle -N accept-line _kaku_ai_query_accept_line
+        _AI_SHELL_KAKU_DISABLED=0
+    fi
+}
+
+_ai_shell_enable() {
+    _ai_shell_disable_kaku
+    zle -N accept-line _ai_shell_accept_line
+    AI_SHELL_DISABLE=0
+}
+
+_ai_shell_disable() {
+    # Only restore if we own the widget
+    [[ "${widgets[accept-line]}" == *"_ai_shell_accept_line"* ]] || return
+    zle -A .accept-line accept-line
+    _ai_shell_restore_kaku
+    AI_SHELL_DISABLE=1
+}
+
 ai-shell() {
     local _state_file="$HOME/.config/ai-shell/state"
     case "${1:-toggle}" in
         on|enable)
-            AI_SHELL_DISABLE=0
+            _ai_shell_enable
             echo "enabled" > "$_state_file"
-            # Ensure we saved the previous widget before taking over
-            if [[ -z "$_AI_SHELL_PREV_FN" ]]; then
-                local prev="${widgets[accept-line]}"
-                if [[ "$prev" == user:* && "$prev" != *"_ai_shell_accept_line"* ]]; then
-                    _AI_SHELL_PREV_FN="${prev#user:}"
-                    zle -N _ai_shell_prev_accept_line "$_AI_SHELL_PREV_FN"
-                fi
-            fi
-            zle -N accept-line _ai_shell_accept_line
             print "  ${_c_purple}AI Shell${_c_reset} ${_c_green}✓ 已启用${_c_reset}"
             ;;
         off|disable)
-            AI_SHELL_DISABLE=1
+            _ai_shell_disable
             echo "disabled" > "$_state_file"
-            # Swap back to previous widget
-            if [[ -n "$_AI_SHELL_PREV_FN" ]]; then
-                zle -N accept-line "$_AI_SHELL_PREV_FN"
-            else
-                zle -A .accept-line accept-line
-            fi
             print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用${_c_reset}"
             ;;
         toggle)
@@ -326,19 +337,11 @@ _ai_shell_register() {
     # Avoid re-registration on re-source
     [[ "${widgets[accept-line]}" == *"_ai_shell_accept_line"* ]] && return
 
-    # Save previous accept-line widget (e.g., Kaku's) before replacing
-    typeset -g _AI_SHELL_PREV_FN=""
-    local prev="${widgets[accept-line]}"
-    if [[ "$prev" == user:* ]]; then
-        _AI_SHELL_PREV_FN="${prev#user:}"
-        zle -N _ai_shell_prev_accept_line "$_AI_SHELL_PREV_FN"
-    fi
-
-    # Only register our widget if enabled
     if [[ "${AI_SHELL_DISABLE:-0}" != "1" ]]; then
+        # Disable Kaku's # first, then take over
+        _ai_shell_disable_kaku
         zle -N accept-line _ai_shell_accept_line
     fi
-
     precmd_functions=("${precmd_functions[@]:#_ai_shell_register}")
 }
 precmd_functions+=(_ai_shell_register)
