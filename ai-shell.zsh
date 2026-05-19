@@ -1,11 +1,15 @@
 #!/usr/bin/env zsh
 # ai-shell.zsh — Standalone AI command generator for any terminal
 # Usage: type "# <query>" and press Enter to generate shell commands via LLM
-# Automatically disabled inside Kaku (which has its own implementation)
+# Toggle: run `ai-shell on|off|toggle|status`
 
 # Permanent disable: export AI_SHELL_DISABLE=1 before sourcing
-# Runtime toggle: run `ai-shell on|off|toggle|status`
 [[ "${AI_SHELL_DISABLE:-0}" == "1" ]] && return 0
+
+# Read persisted runtime toggle state
+[[ -f "$HOME/.config/ai-shell/state" ]] && \
+    [[ "$(cat "$HOME/.config/ai-shell/state" 2>/dev/null)" == "disabled" ]] && \
+    AI_SHELL_DISABLE=1
 
 # ── Config ────────────────────────────────────────────────────────────
 _ai_shell_load_config() {
@@ -232,10 +236,9 @@ Rules:
 }
 
 # ── Widget ────────────────────────────────────────────────────────────
+# Only active when ai-shell is the registered accept-line widget.
+# When disabled, the widget is swapped out entirely — this function is not called.
 _ai_shell_accept_line() {
-    # Runtime toggle: pass through to original when disabled
-    [[ "${AI_SHELL_DISABLE:-0}" == "1" ]] && { zle .accept-line; return }
-
     if [[ -n "$BUFFER" && "${BUFFER[1]}" == '#' && "$BUFFER" != *$'\n'* ]]; then
         local query="${BUFFER:1}"
         query="${query# }"
@@ -258,27 +261,51 @@ _ai_shell_accept_line() {
         fi
     fi
 
-    zle .accept-line
+    # Non-# input: delegate to previous handler (e.g., Kaku's)
+    if [[ -n "$_AI_SHELL_PREV_FN" ]]; then
+        zle _ai_shell_prev_accept_line
+    else
+        zle .accept-line
+    fi
 }
 
 # ── Toggle Command ────────────────────────────────────────────────────
+# Swaps the accept-line widget instead of setting a flag.
+# on  → register ai-shell's widget (saves current one if not saved)
+# off → restore previous widget (Kaku's or builtin)
 ai-shell() {
+    local _state_file="$HOME/.config/ai-shell/state"
     case "${1:-toggle}" in
         on|enable)
             AI_SHELL_DISABLE=0
+            echo "enabled" > "$_state_file"
+            # Ensure we saved the previous widget before taking over
+            if [[ -z "$_AI_SHELL_PREV_FN" ]]; then
+                local prev="${widgets[accept-line]}"
+                if [[ "$prev" == user:* && "$prev" != *"_ai_shell_accept_line"* ]]; then
+                    _AI_SHELL_PREV_FN="${prev#user:}"
+                    zle -N _ai_shell_prev_accept_line "$_AI_SHELL_PREV_FN"
+                fi
+            fi
+            zle -N accept-line _ai_shell_accept_line
             print "  ${_c_purple}AI Shell${_c_reset} ${_c_green}✓ 已启用${_c_reset}"
             ;;
         off|disable)
             AI_SHELL_DISABLE=1
-            print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用（使用 Kaku 内置）${_c_reset}"
+            echo "disabled" > "$_state_file"
+            # Swap back to previous widget
+            if [[ -n "$_AI_SHELL_PREV_FN" ]]; then
+                zle -N accept-line "$_AI_SHELL_PREV_FN"
+            else
+                zle -A .accept-line accept-line
+            fi
+            print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用${_c_reset}"
             ;;
         toggle)
             if [[ "${AI_SHELL_DISABLE:-0}" == "1" ]]; then
-                AI_SHELL_DISABLE=0
-                print "  ${_c_purple}AI Shell${_c_reset} ${_c_green}✓ 已启用${_c_reset}"
+                ai-shell on
             else
-                AI_SHELL_DISABLE=1
-                print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用（使用 Kaku 内置）${_c_reset}"
+                ai-shell off
             fi
             ;;
         status)
@@ -296,7 +323,22 @@ ai-shell() {
 
 # ── Registration ──────────────────────────────────────────────────────
 _ai_shell_register() {
-    zle -N accept-line _ai_shell_accept_line
+    # Avoid re-registration on re-source
+    [[ "${widgets[accept-line]}" == *"_ai_shell_accept_line"* ]] && return
+
+    # Save previous accept-line widget (e.g., Kaku's) before replacing
+    typeset -g _AI_SHELL_PREV_FN=""
+    local prev="${widgets[accept-line]}"
+    if [[ "$prev" == user:* ]]; then
+        _AI_SHELL_PREV_FN="${prev#user:}"
+        zle -N _ai_shell_prev_accept_line "$_AI_SHELL_PREV_FN"
+    fi
+
+    # Only register our widget if enabled
+    if [[ "${AI_SHELL_DISABLE:-0}" != "1" ]]; then
+        zle -N accept-line _ai_shell_accept_line
+    fi
+
     precmd_functions=("${precmd_functions[@]:#_ai_shell_register}")
 }
 precmd_functions+=(_ai_shell_register)
