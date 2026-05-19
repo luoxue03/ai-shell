@@ -32,6 +32,7 @@
 - **危险命令检测** — `rm -rf`、`mkfs`、`dd`、`shutdown` 等自动标黄警告
 - **命令净化** — 自动去除 markdown 代码块、`$ ` 前缀等
 - **Kaku 兼容** — 在 Kaku 终端内自动禁用，避免与内置功能冲突
+- **运行时开关** — `ai-shell off` 切换到 Kaku 内置，`ai-shell on` 切回
 - **零依赖安装** — 仅需 zsh + curl + jq
 
 ## 安装
@@ -84,6 +85,23 @@ AI_SHELL_TIMEOUT=15
 ```
 
 输入以 `#` 开头的描述，按回车即可。按数字键选择方案，其他键取消。
+
+## 开关命令
+
+在终端中直接运行 `ai-shell` 命令切换：
+
+```bash
+ai-shell off     # 禁用 ai-shell，回退到 Kaku 内置的 # 功能
+ai-shell on      # 重新启用 ai-shell
+ai-shell toggle  # 切换开关
+ai-shell status  # 查看当前状态
+```
+
+也可以在 sourcing 前设置环境变量永久禁用：
+
+```bash
+export AI_SHELL_DISABLE=1
+```
 
 ## 上下文信息
 

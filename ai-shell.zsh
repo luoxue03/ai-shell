@@ -3,8 +3,9 @@
 # Usage: type "# <query>" and press Enter to generate shell commands via LLM
 # Automatically disabled inside Kaku (which has its own implementation)
 
-# Skip if running inside Kaku terminal
-[[ -n "${WEZTERM_PANE:-}" ]] && return 0
+# Permanent disable: export AI_SHELL_DISABLE=1 before sourcing
+# Runtime toggle: run `ai-shell on|off|toggle|status`
+[[ "${AI_SHELL_DISABLE:-0}" == "1" ]] && return 0
 
 # ── Config ────────────────────────────────────────────────────────────
 _ai_shell_load_config() {
@@ -232,6 +233,9 @@ Rules:
 
 # ── Widget ────────────────────────────────────────────────────────────
 _ai_shell_accept_line() {
+    # Runtime toggle: pass through to original when disabled
+    [[ "${AI_SHELL_DISABLE:-0}" == "1" ]] && { zle .accept-line; return }
+
     if [[ -n "$BUFFER" && "${BUFFER[1]}" == '#' && "$BUFFER" != *$'\n'* ]]; then
         local query="${BUFFER:1}"
         query="${query# }"
@@ -255,6 +259,39 @@ _ai_shell_accept_line() {
     fi
 
     zle .accept-line
+}
+
+# ── Toggle Command ────────────────────────────────────────────────────
+ai-shell() {
+    case "${1:-toggle}" in
+        on|enable)
+            AI_SHELL_DISABLE=0
+            print "  ${_c_purple}AI Shell${_c_reset} ${_c_green}✓ 已启用${_c_reset}"
+            ;;
+        off|disable)
+            AI_SHELL_DISABLE=1
+            print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用（使用 Kaku 内置）${_c_reset}"
+            ;;
+        toggle)
+            if [[ "${AI_SHELL_DISABLE:-0}" == "1" ]]; then
+                AI_SHELL_DISABLE=0
+                print "  ${_c_purple}AI Shell${_c_reset} ${_c_green}✓ 已启用${_c_reset}"
+            else
+                AI_SHELL_DISABLE=1
+                print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}✗ 已禁用（使用 Kaku 内置）${_c_reset}"
+            fi
+            ;;
+        status)
+            if [[ "${AI_SHELL_DISABLE:-0}" == "1" ]]; then
+                print "  ${_c_purple}AI Shell${_c_reset} ${_c_yellow}已禁用${_c_reset}"
+            else
+                print "  ${_c_purple}AI Shell${_c_reset} ${_c_green}已启用${_c_reset}"
+            fi
+            ;;
+        *)
+            print "  ${_c_purple}Usage:${_c_reset} ai-shell [on|off|toggle|status]"
+            ;;
+    esac
 }
 
 # ── Registration ──────────────────────────────────────────────────────
